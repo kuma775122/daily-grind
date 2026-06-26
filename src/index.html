@@ -749,6 +749,43 @@ const COOLDOWN_POOL = {
 const FOCUS_LABELS = { full: 'FULL BODY' };
 const TRACKABLE_BLOCKS = ['block1', 'block2', 'block3'];
 
+/* Always-available kettlebell swap option per block (Block 1 & 2),
+   matched to the muscle group of the exercise being swapped out. */
+const KETTLEBELL_OPTION = {
+  block1: {
+    upper:  { name: 'Kettlebell Overhead Press', type: 'reps', base: 10 },
+    lower:  { name: 'Kettlebell Goblet Squat', type: 'reps', base: 12 },
+    core:   { name: 'Kettlebell Russian Twist', type: 'reps', base: 20 },
+    cardio: { name: 'Kettlebell Swings', type: 'reps', base: 15 },
+  },
+  block2: {
+    upper:  { name: 'Kettlebell Bent-Over Row', type: 'reps', base: 10 },
+    lower:  { name: 'Kettlebell Front Squat', type: 'reps', base: 10 },
+    core:   { name: 'Kettlebell Windmill', type: 'reps', base: 8 },
+    cardio: { name: 'Kettlebell Clean and Press', type: 'reps', base: 10 },
+  },
+};
+
+/* Resolve which muscle group an exercise belongs to within its block,
+   so the kettlebell swap works the same muscles as what it replaces. */
+const POOL_BY_BLOCK = { block1: STRENGTH_POOL, block2: CONDITIONING_POOL };
+const MUSCLE_GROUPS = ['upper', 'lower', 'core', 'cardio'];
+function categoryOf(blockKey, name) {
+  const pool = POOL_BY_BLOCK[blockKey];
+  if (pool) {
+    for (const cat of MUSCLE_GROUPS) {
+      if (pool[cat].some((ex) => ex.name === name)) return cat;
+    }
+  }
+  const kb = KETTLEBELL_OPTION[blockKey];
+  if (kb) {
+    for (const cat of MUSCLE_GROUPS) {
+      if (kb[cat] && kb[cat].name === name) return cat;
+    }
+  }
+  return 'cardio';
+}
+
 function seededRandom(seed) {
   let s = seed;
   return () => { s = (s * 16807 + 0) % 2147483647; return (s - 1) / 2147483646; };
@@ -958,11 +995,23 @@ function App() {
     const available = (Array.isArray(pool) ? pool : [...pool]).filter(ex => !currentNames.includes(ex.name));
     const origEx = workout[blockKey].exercises[exIdx];
     const rand = seededRandom(getDaySeed(dateStr + blockKey + exIdx + 'swap'));
-    return shuffleWithRand(available, rand).slice(0, 3).map(ex => ({
+    const withTargets = (ex) => ({
       ...ex,
       sets: origEx.sets,
       target: ex.type === 'reps' ? ex.base + Math.floor(rand() * 6) : ex.base + Math.floor(rand() * 16),
-    }));
+    });
+
+    // Always offer a muscle-group-matched kettlebell option in Block 1 & 2
+    // (unless it's already in today's lineup).
+    const kbMap = KETTLEBELL_OPTION[blockKey];
+    const swapOutName = getExercise(blockKey, exIdx).name;
+    const kb = kbMap ? (kbMap[categoryOf(blockKey, swapOutName)] || kbMap.cardio) : null;
+    const forceKb = kb && !currentNames.includes(kb.name);
+    if (forceKb) {
+      const others = shuffleWithRand(available.filter(ex => ex.name !== kb.name), rand).slice(0, 2);
+      return [withTargets(kb), ...others.map(withTargets)];
+    }
+    return shuffleWithRand(available, rand).slice(0, 3).map(withTargets);
   };
 
   const performSwap = useCallback((blockKey, exIdx, newExercise) => {
